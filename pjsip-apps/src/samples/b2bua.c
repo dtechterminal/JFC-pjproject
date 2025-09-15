@@ -473,6 +473,17 @@ static void on_incoming_call(pjsua_acc_id acc_id,
     opt.aud_cnt = 1;
     opt.vid_cnt = 0;
 
+    /* For phone -> upstream, many IMS cores require ;user=phone on E.164 */
+    char dest_buf[512] = {0};
+    if (acc_id == g_acc_loc && dest && !pj_ansi_strstr(dest, ";user=")) {
+        /* if dialed user looks numeric/plus, append ;user=phone */
+        if (userbuf[0] == '+' || (userbuf[0] && pj_isdigit((unsigned char)userbuf[0]))) {
+            pj_ansi_snprintf(dest_buf, sizeof(dest_buf), "%s%s", dest,
+                             (pj_ansi_strchr(dest, ';') ? ";user=phone" : ";user=phone"));
+            dest = dest_buf;
+        }
+    }
+
     /* Normalize destination URI if ;transport=tls, and log */
     char sips_buf[512] = {0};
     const char *final_dest = to_sips_if_tls(dest, sips_buf, sizeof(sips_buf));
