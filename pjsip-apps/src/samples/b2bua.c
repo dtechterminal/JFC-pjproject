@@ -194,18 +194,26 @@ static void disconnect_peer_with_status(pjsua_call_id src_id, int code, const pj
          * - Otherwise, send BYE with the code
          */
         if (have_info) {
+            /* Interop: avoid surfacing 5xx to phone UAs during early dialog. */
+            int map5xx = env_int("MAP_5XX_TO_480", 1);
+            int out_code = code;
+            pj_str_t out_reason = (reason ? *reason : pj_str((char*)""));
             if (oi.state < PJSIP_INV_STATE_CONFIRMED) {
                 if (oi.role == PJSIP_ROLE_UAS) {
+                    if (map5xx && code >= 500) {
+                        out_code = 480;
+                        out_reason = pj_str((char*)"Temporary failure");
+                    }
                     /* Send final on UAS side */
                     pjsua_msg_data md; pjsua_msg_data_init(&md);
                     pj_pool_t *pool = pjsua_pool_create("rsn", 512, 512);
                     /* Optional Reason header for better interop */
-                    if (code == 486 || code == 603 || code == 480 || code == 487) {
+                    if (out_code == 486 || out_code == 603 || out_code == 480 || out_code == 487) {
                         const char *rv = NULL;
-                        if (code == 486) rv = "Q.850;cause=17;text=\"User busy\"";
-                        else if (code == 603) rv = "Q.850;cause=21;text=\"Call rejected\"";
-                        else if (code == 480) rv = "Q.850;cause=18;text=\"No user responding\"";
-                        else if (code == 487) rv = "SIP ;cause=487 ;text=\"Request Terminated\"";
+                        if (out_code == 486) rv = "Q.850;cause=17;text=\"User busy\"";
+                        else if (out_code == 603) rv = "Q.850;cause=21;text=\"Call rejected\"";
+                        else if (out_code == 480) rv = "Q.850;cause=18;text=\"No user responding\"";
+                        else if (out_code == 487) rv = "SIP ;cause=487 ;text=\"Request Terminated\"";
                         if (rv) {
                             pj_str_t H = pj_str((char*)"Reason");
                             pj_str_t V = pj_str((char*)rv);
@@ -213,7 +221,7 @@ static void disconnect_peer_with_status(pjsua_call_id src_id, int code, const pj
                             pj_list_push_back(&md.hdr_list, (pjsip_hdr*)rh);
                         }
                     }
-                    pjsua_call_answer(other, code, (reason ? reason : NULL), &md);
+                    pjsua_call_answer(other, out_code, (out_reason.slen? &out_reason: NULL), &md);
                     pj_pool_release(pool);
                 } else {
                     /* Cancel UAC side */
