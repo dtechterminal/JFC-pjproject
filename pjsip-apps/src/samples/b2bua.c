@@ -199,7 +199,6 @@ static void disconnect_peer_with_status(pjsua_call_id src_id, int code, const pj
                     /* Send final on UAS side */
                     pjsua_msg_data md; pjsua_msg_data_init(&md);
                     pj_pool_t *pool = pjsua_pool_create("rsn", 512, 512);
-                    md.pool = pool;
                     /* Optional Reason header for better interop */
                     if (code == 486 || code == 603 || code == 480 || code == 487) {
                         const char *rv = NULL;
@@ -220,7 +219,6 @@ static void disconnect_peer_with_status(pjsua_call_id src_id, int code, const pj
                     /* Cancel UAC side */
                     pjsua_msg_data md; pjsua_msg_data_init(&md);
                     pj_pool_t *pool = pjsua_pool_create("rsn", 512, 512);
-                    md.pool = pool;
                     if (code == 486 || code == 603 || code == 480 || code == 487) {
                         const char *rv = NULL;
                         if (code == 486) rv = "Q.850;cause=17;text=\"User busy\"";
@@ -241,7 +239,6 @@ static void disconnect_peer_with_status(pjsua_call_id src_id, int code, const pj
                 /* Established or beyond: BYE */
                 pjsua_msg_data md; pjsua_msg_data_init(&md);
                 pj_pool_t *pool = pjsua_pool_create("rsn", 512, 512);
-                md.pool = pool;
                 if (code == 486 || code == 603 || code == 480 || code == 487) {
                     const char *rv = NULL;
                     if (code == 486) rv = "Q.850;cause=17;text=\"User busy\"";
@@ -261,7 +258,6 @@ static void disconnect_peer_with_status(pjsua_call_id src_id, int code, const pj
         } else {
             pjsua_msg_data md; pjsua_msg_data_init(&md);
             pj_pool_t *pool = pjsua_pool_create("rsn", 512, 512);
-            md.pool = pool;
             if (code == 486 || code == 603 || code == 480 || code == 487) {
                 const char *rv = NULL;
                 if (code == 486) rv = "Q.850;cause=17;text=\"User busy\"";
@@ -305,7 +301,6 @@ static void on_call_tsx_state(pjsua_call_id call_id, pjsip_transaction *tsx, pjs
         if (oi.role == PJSIP_ROLE_UAS) {
             pjsua_msg_data md; pjsua_msg_data_init(&md);
             pj_pool_t *pool = pjsua_pool_create("rsn", 256, 256);
-            md.pool = pool;
             pj_str_t H = pj_str((char*)"Reason");
             pj_str_t V = pj_str((char*)"SIP ;cause=487 ;text=\"Request Terminated\"");
             pjsip_generic_string_hdr *rh = pjsip_generic_string_hdr_create(pool, &H, &V);
@@ -315,7 +310,6 @@ static void on_call_tsx_state(pjsua_call_id call_id, pjsip_transaction *tsx, pjs
         } else {
             pjsua_msg_data md; pjsua_msg_data_init(&md);
             pj_pool_t *pool = pjsua_pool_create("rsn", 256, 256);
-            md.pool = pool;
             pj_str_t H = pj_str((char*)"Reason");
             pj_str_t V = pj_str((char*)"SIP ;cause=487 ;text=\"Request Terminated\"");
             pjsip_generic_string_hdr *rh = pjsip_generic_string_hdr_create(pool, &H, &V);
