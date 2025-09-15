@@ -204,7 +204,7 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e)
          * For example, if upstream returns 486/603/480/etc, send the same code back to the phone leg
          * instead of a hardcoded 486. If we initiated CANCEL on the other side, PJSUA will translate
          * this hangup to a proper CANCEL/487 as appropriate. */
-        int code = ci.last_status_code;
+        int code = ci.last_status;
         pj_str_t reason = ci.last_status_text;
         if (code <= 0 || code == 200) {
             /* Fallback when the library didn't record a meaningful final code. */
