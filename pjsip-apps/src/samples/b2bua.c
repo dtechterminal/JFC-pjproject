@@ -180,11 +180,23 @@ static void disconnect_peer_with_status(pjsua_call_id src_id, int code, const pj
 {
     int other = (src_id >= 0 && src_id < MAX_CALLS) ? peer_map[src_id] : -1;
     if (other >= 0 && other < MAX_CALLS) {
+        /* Decide best action by peer role/state */
+        pjsua_call_info oi;
+        pj_bool_t have_info = (pjsua_call_get_info(other, &oi) == PJ_SUCCESS);
+
+        /* Propagate the precise status to the peer leg:
+         * - If peer is UAS and still EARLY, send final response (e.g., 486/603)
+         * - If peer is UAC and still EARLY, send CANCEL with mapped Reason
+         * - Otherwise, send BYE with the code
+         */
+        if (have_info && oi.state < PJSIP_INV_STATE_CONFIRMED && oi.role == PJSIP_ROLE_UAS) {
+            pjsua_call_answer(other, code, (reason ? reason : NULL), NULL);
+        } else {
+            pjsua_call_hangup(other, code, (reason ? reason : NULL), NULL);
+        }
+
         peer_map[other] = -1;
         peer_map[src_id] = -1;
-        /* Propagate the precise status to the peer leg (UAS side will send final response,
-         * UAC side will CANCEL if still in early state). */
-        pjsua_call_hangup(other, code, (reason ? reason : NULL), NULL);
     }
 }
 
