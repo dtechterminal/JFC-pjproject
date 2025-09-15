@@ -484,9 +484,11 @@ static void on_incoming_call(pjsua_acc_id acc_id,
         }
     }
 
-    /* Normalize destination URI if ;transport=tls, and log */
+    /* Normalize destination URI if ;transport=tls -> sips, when enabled */
     char sips_buf[512] = {0};
-    const char *final_dest = to_sips_if_tls(dest, sips_buf, sizeof(sips_buf));
+    const char *final_dest = dest;
+    if (env_int("DIAL_USE_SIPS", 0))
+        final_dest = to_sips_if_tls(dest, sips_buf, sizeof(sips_buf));
     pj_str_t dst_uri;
     pj_cstr(&dst_uri, final_dest);
     /* Debug log for dialing */
@@ -738,7 +740,9 @@ int main(void)
         if (up_reg_uri && *up_reg_uri) {
             {
                 char reg_buf[512] = {0};
-                const char *rnorm = to_sips_if_tls(up_reg_uri, reg_buf, sizeof(reg_buf));
+                const char *rnorm = up_reg_uri;
+                if (env_int("REG_USE_SIPS", 1))
+                    rnorm = to_sips_if_tls(up_reg_uri, reg_buf, sizeof(reg_buf));
                 acc_cfg.reg_uri = pj_str((char*)rnorm);
             }
             acc_cfg.register_on_acc_add = PJ_TRUE;
