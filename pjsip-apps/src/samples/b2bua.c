@@ -322,6 +322,58 @@ static void subst_user_template(const char *tmpl, const char *user, char *out, u
     out[(used < outsz)? used : (outsz-1)] = '\0';
 }
 
+/* Extract display-name and SIP URI from From header if present */
+static void extract_from_identity(pjsip_rx_data *rdata,
+                                  char *name_out, unsigned name_sz,
+                                  char *uri_out,  unsigned uri_sz)
+{
+    if (name_out && name_sz) name_out[0] = '\0';
+    if (uri_out && uri_sz)   uri_out[0] = '\0';
+    if (!rdata || !rdata->msg_info.msg) return;
+
+    pjsip_fromto_hdr *from = rdata->msg_info.from;
+    if (!from || !from->uri) return;
+
+    /* name (display) */
+    if (name_out && name_sz && from->name.slen > 0 && from->name.ptr) {
+        unsigned n = (from->name.slen < (int)(name_sz-1)) ? (unsigned)from->name.slen : (name_sz-1);
+        pj_ansi_strncpy(name_out, from->name.ptr, n);
+        name_out[n] = '\0';
+    }
+
+    /* Build SIP AOR from URI parts */
+    pjsip_uri *uri = pjsip_uri_get_uri(from->uri);
+    if (!uri) return;
+    if (PJSIP_URI_SCHEME_IS_SIP(uri) || PJSIP_URI_SCHEME_IS_SIPS(uri)) {
+        pjsip_sip_uri *su = (pjsip_sip_uri*)uri;
+        const char *scheme = PJSIP_URI_SCHEME_IS_SIPS(uri) ? "sips" : "sip";
+        char user[160] = {0};
+        char host[256] = {0};
+        if (su->user.slen > 0 && su->user.ptr) {
+            unsigned un = (su->user.slen < (int)sizeof(user)-1) ? (unsigned)su->user.slen : (sizeof(user)-1);
+            pj_ansi_strncpy(user, su->user.ptr, un);
+            user[un] = '\0';
+        }
+        if (su->host.slen > 0 && su->host.ptr) {
+            unsigned hn = (su->host.slen < (int)sizeof(host)-1) ? (unsigned)su->host.slen : (sizeof(host)-1);
+            pj_ansi_strncpy(host, su->host.ptr, hn);
+            host[hn] = '\0';
+        }
+        if (uri_out && uri_sz && host[0]) {
+            if (user[0]) pj_ansi_snprintf(uri_out, uri_sz, "%s:%s@%s", scheme, user, host);
+            else         pj_ansi_snprintf(uri_out, uri_sz, "%s:%s", scheme, host);
+        }
+    } else {
+        /* Fallback: print URI generically */
+        if (uri_out && uri_sz) {
+            pj_ssize_t len;
+            len = pjsip_uri_print(PJSIP_URI_IN_FROMTO_HDR, from->uri, uri_out, uri_sz);
+            if (len < 0) uri_out[0] = '\0';
+            else uri_out[(len < (pj_ssize_t)uri_sz ? len : (pj_ssize_t)uri_sz-1)] = '\0';
+        }
+    }
+}
+
 static void on_incoming_call(pjsua_acc_id acc_id,
                              pjsua_call_id call_id,
                              pjsip_rx_data *rdata)
@@ -434,9 +486,47 @@ static void on_incoming_call(pjsua_acc_id acc_id,
         out_acc = g_acc_loc;
     PJ_LOG(3, (THIS_APP, "Dialing upstream dest: %s (out_acc=%d)", final_dest, (int)out_acc));
 
+    /* Optional: attach caller identity headers when upstream -> local so phones don't show "b2bua" */
+    pjsua_msg_data md; pj_bool_t use_md = PJ_FALSE; pj_pool_t *id_pool = NULL;
+    if (acc_id == g_acc_up) {
+        char from_name[128] = {0};
+        char from_aor[256]  = {0};
+        extract_from_identity(rdata, from_name, sizeof(from_name), from_aor, sizeof(from_aor));
+        if (from_aor[0]) {
+            pj_pool_t *pool = pjsua_pool_create("id_hdr", 512, 512);
+            pjsua_msg_data_init(&md);
+            /* Build P-Asserted-Identity */
+            pj_str_t H_PAI = pj_str((char*)"P-Asserted-Identity");
+            char buf_pai[384];
+            if (from_name[0]) pj_ansi_snprintf(buf_pai, sizeof(buf_pai), "\"%s\" <%s>", from_name, from_aor);
+            else              pj_ansi_snprintf(buf_pai, sizeof(buf_pai), "<%s>", from_aor);
+            pj_str_t V_PAI; pj_cstr(&V_PAI, buf_pai);
+            pjsip_generic_string_hdr *pai = pjsip_generic_string_hdr_create(pool, &H_PAI, &V_PAI);
+            pj_list_push_back(&md.hdr_list, (pjsip_hdr*)pai);
+
+            /* Build Remote-Party-ID as calling */
+            pj_str_t H_RPID = pj_str((char*)"Remote-Party-ID");
+            char buf_rpid[416];
+            if (from_name[0])
+                pj_ansi_snprintf(buf_rpid, sizeof(buf_rpid), "\"%s\" <%s>;party=calling;id-type=subscriber;screen=yes;privacy=off",
+                                 from_name, from_aor);
+            else
+                pj_ansi_snprintf(buf_rpid, sizeof(buf_rpid), "<%s>;party=calling;id-type=subscriber;screen=yes;privacy=off",
+                                 from_aor);
+            pj_str_t V_RPID; pj_cstr(&V_RPID, buf_rpid);
+            pjsip_generic_string_hdr *rpid = pjsip_generic_string_hdr_create(pool, &H_RPID, &V_RPID);
+            pj_list_push_back(&md.hdr_list, (pjsip_hdr*)rpid);
+
+            use_md = PJ_TRUE;
+            id_pool = pool;
+        }
+    }
+
     /* Place outbound using the opposite account if available, otherwise same acc */
     pjsua_call_id out_id = PJSUA_INVALID_ID;
-    pj_status_t st = pjsua_call_make_call(out_acc, &dst_uri, &opt, NULL, NULL, &out_id);
+    pj_status_t st = pjsua_call_make_call(out_acc, &dst_uri, &opt, NULL,
+                                          use_md ? &md : NULL, &out_id);
+    if (id_pool) { pj_pool_release(id_pool); id_pool = NULL; }
     if (st != PJ_SUCCESS) {
         PJ_LOG(1, (THIS_APP, "Failed to create outbound leg"));
         pjsua_call_hangup(call_id, 500, NULL, NULL);
