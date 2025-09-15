@@ -633,7 +633,10 @@ static void on_incoming_call(pjsua_acc_id acc_id,
         out_acc = g_acc_loc;
     PJ_LOG(3, (THIS_APP, "Dialing upstream dest: %s (out_acc=%d)", final_dest, (int)out_acc));
 
-    /* Optional: attach caller identity headers when upstream -> local so phones don't show "b2bua" */
+    /* Optional: attach identity headers
+     * - upstream -> local: add PAI/RPID so phone shows real caller
+     * - local -> upstream: add P-Preferred-Identity for IMS interop
+     */
     pjsua_msg_data md; pj_bool_t use_md = PJ_FALSE; pj_pool_t *id_pool = NULL;
     if (acc_id == g_acc_up) {
         char from_name[128] = {0};
@@ -666,6 +669,35 @@ static void on_incoming_call(pjsua_acc_id acc_id,
 
             use_md = PJ_TRUE;
             id_pool = pool;
+        }
+    } else if (acc_id == g_acc_loc) {
+        /* Add P-Preferred-Identity towards upstream */
+        const char *ppi_uri = env_str("UP_PPI_URI", NULL);
+        if (!ppi_uri || !*ppi_uri) ppi_uri = env_str("UP_ID_URI", NULL);
+        if (!ppi_uri || !*ppi_uri) ppi_uri = env_str("PUBLIC_ID", NULL);
+        if (ppi_uri && *ppi_uri) {
+            /* Optionally add ;user=phone if E.164 and not present */
+            char ppi_val[512];
+            const char *uri_for_ppi = ppi_uri;
+            char tmp[512]; tmp[0] = '\0';
+            const char *at = pj_ansi_strchr(ppi_uri, '@');
+            if (at && userbuf[0] == '+') {
+                if (!pj_ansi_strstr(ppi_uri, ";user=")) {
+                    pj_ansi_snprintf(tmp, sizeof(tmp), "%.*s;user=phone%s",
+                                     (int)(at-ppi_uri), ppi_uri, at);
+                    uri_for_ppi = tmp;
+                }
+            }
+
+            pj_pool_t *pool = pjsua_pool_create("ppi_hdr", 256, 256);
+            pjsua_msg_data_init(&md);
+            pj_str_t H = pj_str((char*)"P-Preferred-Identity");
+            pj_str_t V; char buf[512];
+            pj_ansi_snprintf(buf, sizeof(buf), "<%s>", uri_for_ppi);
+            pj_cstr(&V, buf);
+            pjsip_generic_string_hdr *ppi = pjsip_generic_string_hdr_create(pool, &H, &V);
+            pj_list_push_back(&md.hdr_list, (pjsip_hdr*)ppi);
+            use_md = PJ_TRUE; id_pool = pool;
         }
     }
 
