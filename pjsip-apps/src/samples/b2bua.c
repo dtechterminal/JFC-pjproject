@@ -180,6 +180,10 @@ static void disconnect_peer_with_status(pjsua_call_id src_id, int code, const pj
 {
     int other = (src_id >= 0 && src_id < MAX_CALLS) ? peer_map[src_id] : -1;
     if (other >= 0 && other < MAX_CALLS) {
+        /* Break the mapping first to avoid re-entrant double hangups */
+        peer_map[other] = -1;
+        peer_map[src_id] = -1;
+
         /* Decide best action by peer role/state */
         pjsua_call_info oi;
         pj_bool_t have_info = (pjsua_call_get_info(other, &oi) == PJ_SUCCESS);
@@ -189,14 +193,138 @@ static void disconnect_peer_with_status(pjsua_call_id src_id, int code, const pj
          * - If peer is UAC and still EARLY, send CANCEL with mapped Reason
          * - Otherwise, send BYE with the code
          */
-        if (have_info && oi.state < PJSIP_INV_STATE_CONFIRMED && oi.role == PJSIP_ROLE_UAS) {
-            pjsua_call_answer(other, code, (reason ? reason : NULL), NULL);
+        if (have_info) {
+            if (oi.state < PJSIP_INV_STATE_CONFIRMED) {
+                if (oi.role == PJSIP_ROLE_UAS) {
+                    /* Send final on UAS side */
+                    pjsua_msg_data md; pjsua_msg_data_init(&md);
+                    pj_pool_t *pool = pjsua_pool_create("rsn", 512, 512);
+                    md.pool = pool;
+                    /* Optional Reason header for better interop */
+                    if (code == 486 || code == 603 || code == 480 || code == 487) {
+                        const char *rv = NULL;
+                        if (code == 486) rv = "Q.850;cause=17;text=\"User busy\"";
+                        else if (code == 603) rv = "Q.850;cause=21;text=\"Call rejected\"";
+                        else if (code == 480) rv = "Q.850;cause=18;text=\"No user responding\"";
+                        else if (code == 487) rv = "SIP ;cause=487 ;text=\"Request Terminated\"";
+                        if (rv) {
+                            pj_str_t H = pj_str((char*)"Reason");
+                            pj_str_t V = pj_str((char*)rv);
+                            pjsip_generic_string_hdr *rh = pjsip_generic_string_hdr_create(pool, &H, &V);
+                            pj_list_push_back(&md.hdr_list, (pjsip_hdr*)rh);
+                        }
+                    }
+                    pjsua_call_answer(other, code, (reason ? reason : NULL), &md);
+                    pj_pool_release(pool);
+                } else {
+                    /* Cancel UAC side */
+                    pjsua_msg_data md; pjsua_msg_data_init(&md);
+                    pj_pool_t *pool = pjsua_pool_create("rsn", 512, 512);
+                    md.pool = pool;
+                    if (code == 486 || code == 603 || code == 480 || code == 487) {
+                        const char *rv = NULL;
+                        if (code == 486) rv = "Q.850;cause=17;text=\"User busy\"";
+                        else if (code == 603) rv = "Q.850;cause=21;text=\"Call rejected\"";
+                        else if (code == 480) rv = "Q.850;cause=18;text=\"No user responding\"";
+                        else if (code == 487) rv = "SIP ;cause=487 ;text=\"Request Terminated\"";
+                        if (rv) {
+                            pj_str_t H = pj_str((char*)"Reason");
+                            pj_str_t V = pj_str((char*)rv);
+                            pjsip_generic_string_hdr *rh = pjsip_generic_string_hdr_create(pool, &H, &V);
+                            pj_list_push_back(&md.hdr_list, (pjsip_hdr*)rh);
+                        }
+                    }
+                    pjsua_call_hangup(other, code, (reason ? reason : NULL), &md);
+                    pj_pool_release(pool);
+                }
+            } else {
+                /* Established or beyond: BYE */
+                pjsua_msg_data md; pjsua_msg_data_init(&md);
+                pj_pool_t *pool = pjsua_pool_create("rsn", 512, 512);
+                md.pool = pool;
+                if (code == 486 || code == 603 || code == 480 || code == 487) {
+                    const char *rv = NULL;
+                    if (code == 486) rv = "Q.850;cause=17;text=\"User busy\"";
+                    else if (code == 603) rv = "Q.850;cause=21;text=\"Call rejected\"";
+                    else if (code == 480) rv = "Q.850;cause=18;text=\"No user responding\"";
+                    else if (code == 487) rv = "SIP ;cause=487 ;text=\"Request Terminated\"";
+                    if (rv) {
+                        pj_str_t H = pj_str((char*)"Reason");
+                        pj_str_t V = pj_str((char*)rv);
+                        pjsip_generic_string_hdr *rh = pjsip_generic_string_hdr_create(pool, &H, &V);
+                        pj_list_push_back(&md.hdr_list, (pjsip_hdr*)rh);
+                    }
+                }
+                pjsua_call_hangup(other, code, (reason ? reason : NULL), &md);
+                pj_pool_release(pool);
+            }
         } else {
-            pjsua_call_hangup(other, code, (reason ? reason : NULL), NULL);
+            pjsua_msg_data md; pjsua_msg_data_init(&md);
+            pj_pool_t *pool = pjsua_pool_create("rsn", 512, 512);
+            md.pool = pool;
+            if (code == 486 || code == 603 || code == 480 || code == 487) {
+                const char *rv = NULL;
+                if (code == 486) rv = "Q.850;cause=17;text=\"User busy\"";
+                else if (code == 603) rv = "Q.850;cause=21;text=\"Call rejected\"";
+                else if (code == 480) rv = "Q.850;cause=18;text=\"No user responding\"";
+                else if (code == 487) rv = "SIP ;cause=487 ;text=\"Request Terminated\"";
+                if (rv) {
+                    pj_str_t H = pj_str((char*)"Reason");
+                    pj_str_t V = pj_str((char*)rv);
+                    pjsip_generic_string_hdr *rh = pjsip_generic_string_hdr_create(pool, &H, &V);
+                    pj_list_push_back(&md.hdr_list, (pjsip_hdr*)rh);
+                }
+            }
+            pjsua_call_hangup(other, code, (reason ? reason : NULL), &md);
+            pj_pool_release(pool);
         }
+    }
+}
 
-        peer_map[other] = -1;
-        peer_map[src_id] = -1;
+/* React fast to incoming CANCEL by terminating the peer leg appropriately. */
+static void on_call_tsx_state(pjsua_call_id call_id, pjsip_transaction *tsx, pjsip_event *e)
+{
+    PJ_UNUSED_ARG(e);
+    if (!tsx) return;
+    if (tsx->role != PJSIP_ROLE_UAS) return;
+    /* Only react on CANCEL request from the remote */
+    if (tsx->method.id != PJSIP_CANCEL_METHOD) return;
+
+    int other = (call_id >= 0 && call_id < MAX_CALLS) ? peer_map[call_id] : -1;
+    if (other < 0 || other >= MAX_CALLS) return;
+
+    pjsua_call_info oi;
+    if (pjsua_call_get_info(other, &oi) != PJ_SUCCESS) return;
+
+    pj_str_t r = pj_str((char*)"Request Terminated");
+    /* Break link to avoid double actions */
+    peer_map[other] = -1;
+    peer_map[call_id] = -1;
+
+    if (oi.state < PJSIP_INV_STATE_CONFIRMED) {
+        if (oi.role == PJSIP_ROLE_UAS) {
+            pjsua_msg_data md; pjsua_msg_data_init(&md);
+            pj_pool_t *pool = pjsua_pool_create("rsn", 256, 256);
+            md.pool = pool;
+            pj_str_t H = pj_str((char*)"Reason");
+            pj_str_t V = pj_str((char*)"SIP ;cause=487 ;text=\"Request Terminated\"");
+            pjsip_generic_string_hdr *rh = pjsip_generic_string_hdr_create(pool, &H, &V);
+            pj_list_push_back(&md.hdr_list, (pjsip_hdr*)rh);
+            pjsua_call_answer(other, 487, &r, &md);
+            pj_pool_release(pool);
+        } else {
+            pjsua_msg_data md; pjsua_msg_data_init(&md);
+            pj_pool_t *pool = pjsua_pool_create("rsn", 256, 256);
+            md.pool = pool;
+            pj_str_t H = pj_str((char*)"Reason");
+            pj_str_t V = pj_str((char*)"SIP ;cause=487 ;text=\"Request Terminated\"");
+            pjsip_generic_string_hdr *rh = pjsip_generic_string_hdr_create(pool, &H, &V);
+            pj_list_push_back(&md.hdr_list, (pjsip_hdr*)rh);
+            pjsua_call_hangup(other, 487, &r, &md); /* triggers CANCEL */
+            pj_pool_release(pool);
+        }
+    } else {
+        pjsua_call_hangup(other, 487, &r, NULL);
     }
 }
 
@@ -582,6 +710,7 @@ int main(void)
     cfg.cb.on_incoming_call    = &on_incoming_call;
     cfg.cb.on_call_state       = &on_call_state;
     cfg.cb.on_call_media_state = &on_call_media_state;
+    cfg.cb.on_call_tsx_state   = &on_call_tsx_state;
     /* Ensure ;lr is appended to route/proxy URIs */
     cfg.force_lr = PJ_TRUE;
 
