@@ -149,6 +149,7 @@ static void set_codec_preferences(void)
     }
 }
 
+
 static void disconnect_peer_if_any(pjsua_call_id call_id)
 {
     int other = (call_id >= 0 && call_id < MAX_CALLS) ? peer_map[call_id] : -1;
@@ -156,6 +157,18 @@ static void disconnect_peer_if_any(pjsua_call_id call_id)
         peer_map[other] = -1;
         peer_map[call_id] = -1;
         pjsua_call_hangup(other, 486, NULL, NULL);
+    }
+}
+
+static void disconnect_peer_with_status(pjsua_call_id src_id, int code, const pj_str_t *reason)
+{
+    int other = (src_id >= 0 && src_id < MAX_CALLS) ? peer_map[src_id] : -1;
+    if (other >= 0 && other < MAX_CALLS) {
+        peer_map[other] = -1;
+        peer_map[src_id] = -1;
+        /* Propagate the precise status to the peer leg (UAS side will send final response,
+         * UAC side will CANCEL if still in early state). */
+        pjsua_call_hangup(other, code, (reason ? reason : NULL), NULL);
     }
 }
 
@@ -187,8 +200,20 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e)
     if (pjsua_call_get_info(call_id, &ci) != PJ_SUCCESS) return;
 
     if (ci.state == PJSIP_INV_STATE_DISCONNECTED) {
-        disconnect_peer_if_any(call_id);
-        PJ_LOG(3, (THIS_APP, "Call %d disconnected", call_id));
+        /* Prefer to propagate the actual upstream/downstream final status code to the opposite leg.
+         * For example, if upstream returns 486/603/480/etc, send the same code back to the phone leg
+         * instead of a hardcoded 486. If we initiated CANCEL on the other side, PJSUA will translate
+         * this hangup to a proper CANCEL/487 as appropriate. */
+        int code = ci.last_status_code;
+        pj_str_t reason = ci.last_status_text;
+        if (code <= 0 || code == 200) {
+            /* Fallback when the library didn't record a meaningful final code. */
+            code = 486;
+            reason.ptr = NULL;
+            reason.slen = 0;
+        }
+        disconnect_peer_with_status(call_id, code, (reason.slen ? &reason : NULL));
+        PJ_LOG(3, (THIS_APP, "Call %d disconnected (propagated code=%d)", call_id, code));
     } else if (ci.state == PJSIP_INV_STATE_CONFIRMED) {
         PJ_LOG(3, (THIS_APP, "Call %d confirmed", call_id));
         /* If this is the outbound leg confirmed, answer the inbound */
@@ -358,14 +383,14 @@ static void on_incoming_call(pjsua_acc_id acc_id,
             pj_list_push_back(&msg.hdr_list, (pjsip_hdr*)pai);
 
             /* Also add Remote-Party-ID (some phones prefer this) */
-            pj_ansi_snprintf(rpidv, sizeof(rpidv), "\"%s\" <sip:%s@%s>;party=called;id-type=subscriber;screen=no",
+            pj_ansi_snprintf(rpidv, sizeof(rpidv), "\"%s\" <sip:%s@%s>;party=called;id-type=subscriber;screen=yes;privacy=off",
                              userbuf, userbuf, udom);
             pj_cstr(&V_RPID, rpidv);
             pjsip_generic_string_hdr *rpid = pjsip_generic_string_hdr_create(pool, &H_RPID, &V_RPID);
             pj_list_push_back(&msg.hdr_list, (pjsip_hdr*)rpid);
 
-            /* P-Called-Party-ID */
-            pj_str_t V_PCPID; pj_cstr(&V_PCPID, rpidv); /* reuse same value format */
+            /* P-Called-Party-ID (reuse same value; includes screen=yes;privacy=off) */
+            pj_str_t V_PCPID; pj_cstr(&V_PCPID, rpidv);
             pjsip_generic_string_hdr *pcpid = pjsip_generic_string_hdr_create(pool, &H_PCPID, &V_PCPID);
             pj_list_push_back(&msg.hdr_list, (pjsip_hdr*)pcpid);
         }
