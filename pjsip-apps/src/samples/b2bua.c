@@ -814,13 +814,11 @@ int main(void)
         const char *crt = env_str("TLS_CERT_FILE", NULL);
         const char *key = env_str("TLS_PRIVKEY_FILE", NULL);
         const char *pwd = env_str("TLS_PASSWORD", NULL);
-        const char *sni = env_str("TLS_SERVER_NAME", env_str("UP_DOMAIN", env_str("UP_REALM", env_str("REALM", NULL))));
 
         if (caf && *caf) tcfg.tls_setting.ca_list_file = pj_str((char*)caf);
         if (crt && *crt) tcfg.tls_setting.cert_file    = pj_str((char*)crt);
         if (key && *key) tcfg.tls_setting.privkey_file = pj_str((char*)key);
         if (pwd && *pwd) tcfg.tls_setting.password     = pj_str((char*)pwd);
-        if (sni && *sni) tcfg.tls_setting.server_name  = pj_str((char*)sni);
 
         st = pjsua_transport_create(PJSIP_TRANSPORT_TLS, &tcfg, &g_tls_tid);
         if (st != PJ_SUCCESS) {
