@@ -79,6 +79,7 @@ static pj_bool_t want_tls_from_env(void)
     return PJ_FALSE;
 }
 
+
 static pj_bool_t want_udp_from_env(void)
 {
     const char *t = env_str("TRANSPORT", NULL);
@@ -86,6 +87,21 @@ static pj_bool_t want_udp_from_env(void)
     if (!pj_ansi_stricmp(t, "udp")) return PJ_TRUE;
     if (!pj_ansi_stricmp(t, "both")) return PJ_TRUE;
     return PJ_FALSE;
+}
+
+/* Normalize sip: URIs with ;transport=tls to sips: for registration/dialing */
+static const char* to_sips_if_tls(const char *uri, char *out, unsigned outsz)
+{
+    if (!uri || !*uri || !out || outsz == 0) return uri;
+    if (!pj_ansi_strncmp(uri, "sip:", 4)) {
+        const char *tp = pj_ansi_strstr(uri, "transport=tls");
+        if (tp) {
+            /* Rewrite leading scheme only; keep the rest intact (including ;transport=tls). */
+            pj_ansi_snprintf(out, outsz, "sips:%s", uri+4);
+            return out;
+        }
+    }
+    return uri;
 }
 
 static void set_codec_preferences(void)
@@ -405,16 +421,20 @@ static void on_incoming_call(pjsua_acc_id acc_id,
     opt.aud_cnt = 1;
     opt.vid_cnt = 0;
 
+    /* Normalize destination URI if ;transport=tls, and log */
+    char sips_buf[512] = {0};
+    const char *final_dest = to_sips_if_tls(dest, sips_buf, sizeof(sips_buf));
     pj_str_t dst_uri;
-    pj_cstr(&dst_uri, dest);
-
-    /* Place outbound using the opposite account if available, otherwise same acc */
+    pj_cstr(&dst_uri, final_dest);
+    /* Debug log for dialing */
     pjsua_acc_id out_acc = acc_id;
     if (acc_id == g_acc_loc && g_acc_up != PJSUA_INVALID_ID)
         out_acc = g_acc_up;
     else if (acc_id == g_acc_up && g_acc_loc != PJSUA_INVALID_ID)
         out_acc = g_acc_loc;
+    PJ_LOG(3, (THIS_APP, "Dialing upstream dest: %s (out_acc=%d)", final_dest, (int)out_acc));
 
+    /* Place outbound using the opposite account if available, otherwise same acc */
     pjsua_call_id out_id = PJSUA_INVALID_ID;
     pj_status_t st = pjsua_call_make_call(out_acc, &dst_uri, &opt, NULL, NULL, &out_id);
     if (st != PJ_SUCCESS) {
@@ -615,7 +635,11 @@ int main(void)
             acc_cfg.id = pj_str("sip:upstream@invalid");
 
         if (up_reg_uri && *up_reg_uri) {
-            acc_cfg.reg_uri = pj_str((char*)up_reg_uri);
+            {
+                char reg_buf[512] = {0};
+                const char *rnorm = to_sips_if_tls(up_reg_uri, reg_buf, sizeof(reg_buf));
+                acc_cfg.reg_uri = pj_str((char*)rnorm);
+            }
             acc_cfg.register_on_acc_add = PJ_TRUE;
         } else {
             acc_cfg.register_on_acc_add = PJ_FALSE;
