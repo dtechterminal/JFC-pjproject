@@ -875,6 +875,9 @@ int main(void)
         acc_cfg.rtp_cfg.port = (unsigned)env_int("RTP_PORT", 52000);
         acc_cfg.rtp_cfg.port_range = 200;
 
+        /* Avoid mid-early UPDATE/re-INVITE to lock to one codec unless explicitly enabled */
+        acc_cfg.lock_codec = env_int("LOCK_CODEC", 0) ? PJ_TRUE : PJ_FALSE;
+
         st = pjsua_acc_add(&acc_cfg, PJ_TRUE, &g_acc_loc);
         if (st != PJ_SUCCESS) {
             PJ_LOG(1, (THIS_APP, "Failed to add local account"));
@@ -923,6 +926,9 @@ int main(void)
         /* RTP base port/range */
         acc_cfg.rtp_cfg.port = (unsigned)env_int("RTP_PORT", 52000);
         acc_cfg.rtp_cfg.port_range = 200;
+
+        /* Avoid mid-early UPDATE/re-INVITE to lock to one codec unless explicitly enabled */
+        acc_cfg.lock_codec = env_int("LOCK_CODEC", 0) ? PJ_TRUE : PJ_FALSE;
 
         /* REGISTER request target and Contact formatting for upstream */
         if (acc_cfg.register_on_acc_add && (up_reg_uri && *up_reg_uri)) {
