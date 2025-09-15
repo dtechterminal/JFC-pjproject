@@ -566,38 +566,40 @@ static void on_incoming_call(pjsua_acc_id acc_id,
         return;
     }
 
-    /* Ring inbound while we place the outbound leg. For local leg, attach
-     * identity headers so phone shows callee number instead of account name. */
+    /* Ring inbound while we place the outbound leg. Match MicroSIP: do not
+     * add extra identity headers by default (can be enabled via LOCAL_RING_IDENTITY=1). */
     if (acc_id == g_acc_loc) {
-        pj_pool_t *pool = pjsua_pool_create("tmp_hdr", 512, 512);
-        pjsua_msg_data msg; pjsua_msg_data_init(&msg);
-        if (*userbuf) {
-            const char *udom = env_str("UP_DOMAIN", env_str("UP_REALM", env_str("REALM", "invalid")));
-            char hval[256];
-            char rpidv[320];
-            pj_str_t H_PAI = pj_str((char*)"P-Asserted-Identity");
-            pj_str_t H_RPID = pj_str((char*)"Remote-Party-ID");
-            pj_str_t H_PCPID = pj_str((char*)"P-Called-Party-ID");
-            pj_str_t V_PAI, V_RPID;
-            pj_ansi_snprintf(hval, sizeof(hval), "\"%s\" <sip:%s@%s>", userbuf, userbuf, udom);
-            pj_cstr(&V_PAI, hval);
-            pjsip_generic_string_hdr *pai = pjsip_generic_string_hdr_create(pool, &H_PAI, &V_PAI);
-            pj_list_push_back(&msg.hdr_list, (pjsip_hdr*)pai);
+        if (env_int("LOCAL_RING_IDENTITY", 0)) {
+            pj_pool_t *pool = pjsua_pool_create("tmp_hdr", 512, 512);
+            pjsua_msg_data msg; pjsua_msg_data_init(&msg);
+            if (*userbuf) {
+                const char *udom = env_str("UP_DOMAIN", env_str("UP_REALM", env_str("REALM", "invalid")));
+                char hval[256];
+                char rpidv[320];
+                pj_str_t H_PAI = pj_str((char*)"P-Asserted-Identity");
+                pj_str_t H_RPID = pj_str((char*)"Remote-Party-ID");
+                pj_str_t H_PCPID = pj_str((char*)"P-Called-Party-ID");
+                pj_str_t V_PAI, V_RPID;
+                pj_ansi_snprintf(hval, sizeof(hval), "\"%s\" <sip:%s@%s>", userbuf, userbuf, udom);
+                pj_cstr(&V_PAI, hval);
+                pjsip_generic_string_hdr *pai = pjsip_generic_string_hdr_create(pool, &H_PAI, &V_PAI);
+                pj_list_push_back(&msg.hdr_list, (pjsip_hdr*)pai);
 
-            /* Also add Remote-Party-ID (some phones prefer this) */
-            pj_ansi_snprintf(rpidv, sizeof(rpidv), "\"%s\" <sip:%s@%s>;party=called;id-type=subscriber;screen=yes;privacy=off",
-                             userbuf, userbuf, udom);
-            pj_cstr(&V_RPID, rpidv);
-            pjsip_generic_string_hdr *rpid = pjsip_generic_string_hdr_create(pool, &H_RPID, &V_RPID);
-            pj_list_push_back(&msg.hdr_list, (pjsip_hdr*)rpid);
+                pj_ansi_snprintf(rpidv, sizeof(rpidv), "\"%s\" <sip:%s@%s>;party=called;id-type=subscriber;screen=yes;privacy=off",
+                                 userbuf, userbuf, udom);
+                pj_cstr(&V_RPID, rpidv);
+                pjsip_generic_string_hdr *rpid = pjsip_generic_string_hdr_create(pool, &H_RPID, &V_RPID);
+                pj_list_push_back(&msg.hdr_list, (pjsip_hdr*)rpid);
 
-            /* P-Called-Party-ID (reuse same value; includes screen=yes;privacy=off) */
-            pj_str_t V_PCPID; pj_cstr(&V_PCPID, rpidv);
-            pjsip_generic_string_hdr *pcpid = pjsip_generic_string_hdr_create(pool, &H_PCPID, &V_PCPID);
-            pj_list_push_back(&msg.hdr_list, (pjsip_hdr*)pcpid);
+                pj_str_t V_PCPID; pj_cstr(&V_PCPID, rpidv);
+                pjsip_generic_string_hdr *pcpid = pjsip_generic_string_hdr_create(pool, &H_PCPID, &V_PCPID);
+                pj_list_push_back(&msg.hdr_list, (pjsip_hdr*)pcpid);
+            }
+            pjsua_call_answer2(call_id, NULL, 180, NULL, &msg);
+            pj_pool_release(pool);
+        } else {
+            pjsua_call_answer(call_id, 180, NULL, NULL);
         }
-        pjsua_call_answer2(call_id, NULL, 180, NULL, &msg);
-        pj_pool_release(pool);
     } else {
         pjsua_call_answer(call_id, 180, NULL, NULL);
     }
@@ -812,11 +814,13 @@ int main(void)
         const char *crt = env_str("TLS_CERT_FILE", NULL);
         const char *key = env_str("TLS_PRIVKEY_FILE", NULL);
         const char *pwd = env_str("TLS_PASSWORD", NULL);
+        const char *sni = env_str("TLS_SERVER_NAME", env_str("UP_DOMAIN", env_str("UP_REALM", env_str("REALM", NULL))));
 
         if (caf && *caf) tcfg.tls_setting.ca_list_file = pj_str((char*)caf);
         if (crt && *crt) tcfg.tls_setting.cert_file    = pj_str((char*)crt);
         if (key && *key) tcfg.tls_setting.privkey_file = pj_str((char*)key);
         if (pwd && *pwd) tcfg.tls_setting.password     = pj_str((char*)pwd);
+        if (sni && *sni) tcfg.tls_setting.server_name  = pj_str((char*)sni);
 
         st = pjsua_transport_create(PJSIP_TRANSPORT_TLS, &tcfg, &g_tls_tid);
         if (st != PJ_SUCCESS) {
