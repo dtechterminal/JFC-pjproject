@@ -41,6 +41,7 @@ SAMPLES := auddemo \
 	   sipstateless \
 	   stateful_proxy \
 	   stateless_proxy \
+	   b2bua \
 	   stereotest \
 	   streamutil \
 	   strerror \
