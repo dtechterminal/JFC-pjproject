@@ -30,6 +30,7 @@
  *   DEST_TO_LOCAL     : when upstream calls in, dial this phone URI
  *   UP_DEST_URI       : alias for DEST_TO_UPSTREAM; LOC_DEST_URI for DEST_TO_LOCAL
  *   LOG_LEVEL         : console log level (default 3)
+ *   EARLY_PROVISIONAL_CODE : 180 or 183 (default 183 to ensure SDP in provisionals)
  */
 
 #include <pjsua-lib/pjsua.h>
@@ -87,6 +88,15 @@ static pj_bool_t want_udp_from_env(void)
     if (!pj_ansi_stricmp(t, "udp")) return PJ_TRUE;
     if (!pj_ansi_stricmp(t, "both")) return PJ_TRUE;
     return PJ_FALSE;
+}
+
+/* Force SDP-bearing provisional by default to keep strict peers happy. */
+static unsigned initial_provisional_code(void)
+{
+    int cfg = env_int("EARLY_PROVISIONAL_CODE", 183);
+    if (cfg != 180 && cfg != 183)
+        cfg = 183;
+    return (unsigned)cfg;
 }
 
 /* Normalize sip: URIs with ;transport=tls to sips: for registration/dialing */
@@ -574,6 +584,8 @@ static void on_incoming_call(pjsua_acc_id acc_id,
         return;
     }
 
+    unsigned early_code = initial_provisional_code();
+
     /* Ring inbound while we place the outbound leg. Match MicroSIP: do not
      * add extra identity headers by default (can be enabled via LOCAL_RING_IDENTITY=1). */
     if (acc_id == g_acc_loc) {
@@ -603,13 +615,13 @@ static void on_incoming_call(pjsua_acc_id acc_id,
                 pjsip_generic_string_hdr *pcpid = pjsip_generic_string_hdr_create(pool, &H_PCPID, &V_PCPID);
                 pj_list_push_back(&msg.hdr_list, (pjsip_hdr*)pcpid);
             }
-            pjsua_call_answer2(call_id, NULL, 180, NULL, &msg);
+            pjsua_call_answer2(call_id, NULL, early_code, NULL, &msg);
             pj_pool_release(pool);
         } else {
-            pjsua_call_answer(call_id, 180, NULL, NULL);
+            pjsua_call_answer(call_id, early_code, NULL, NULL);
         }
     } else {
-        pjsua_call_answer(call_id, 180, NULL, NULL);
+        pjsua_call_answer(call_id, early_code, NULL, NULL);
     }
 
     pjsua_call_setting opt;
